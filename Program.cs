@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -25,6 +26,34 @@ namespace ParkingFree
             var client = new HttpClient();
             client.DefaultRequestHeaders.Add("Authorization", "Bearer " + bearer);
 
+            var options = new ProgressBarOptions
+            {
+                ProgressCharacter = '▇',
+                ProgressBarOnBottom = true
+            };
+
+            using (var pbar = new ProgressBar(20, "收集广告Id...", options))
+            {
+                for (int i = 0; i < 20; i++)
+                {
+                    var resIds = await client.GetAsync("https://3rd.merculet.cn/lec/k8sprod/activity/api/v1/rp/user/randomListV2");
+                    var ids = JsonConvert.DeserializeObject<JObject>(await resIds.Content.ReadAsStringAsync());
+
+                    if (ids["code"].ToString() == "401")
+                    {
+                        Error("Bearer 失效 , 需要重新获取");
+                    }
+
+                    AllIds.AddRange(ids["body"].Select(x => x["redPackage"]["rpParentId"].ToString()));
+                    await Task.Delay(200);
+
+                    pbar.Tick(i);
+                    pbar.Tick($"收集中...");
+                }
+                AllIds = AllIds.Distinct().ToList();
+                pbar.Tick($"收集完成, 共收集 {AllIds.Count} 条广告.");
+            }
+
             var errorCount = 0;
             while (true)
             {
@@ -36,27 +65,19 @@ namespace ParkingFree
                 if (JsonConvert.DeserializeObject<JObject>(str1)["code"].ToString() != "200")
                 {
                     System.Console.WriteLine(str1);
-                    if (errorCount++ > 15)
+                    if (errorCount++ > 8)
                     {
-                        Error($"连续失败次数达到{errorCount}次, 系统将停止运行.");
-                    }
-                    if (JsonConvert.DeserializeObject<JObject>(str1)["code"].ToString() == "401")
-                    {
-                        Error("Bearer 失效 , 需要重新获取");
+                        System.Console.WriteLine($"连续错误超过8次, {id} 将被移除.");
+                        AllIds.RemoveAll(x => x == id);
                     }
                     continue;
                 }
 
                 try
                 {
-                    var awaitTime = new Random().Next(8000, 10000); // 6.0s ~ 7.0s
-                    var options = new ProgressBarOptions
-                    {
-                        ProgressCharacter = '▇',
-                        ProgressBarOnBottom = true
-                    };
+                    var awaitTime = new Random().Next(7000, 8000);
                     var time = DateTime.Now;
-                    using (var pbar = new ProgressBar(awaitTime, "Initial message", options))
+                    using (var pbar = new ProgressBar(awaitTime, "看广告...", options))
                     {
                         var lag = 0;
                         while (lag <= awaitTime)
@@ -96,15 +117,10 @@ namespace ParkingFree
                 System.Console.WriteLine($"奖励金额: [{GetAmount(str4)}]");
                 if (JsonConvert.DeserializeObject<JObject>(str4)["code"].ToString() != "200")
                 {
-                    System.Console.WriteLine(str4);
-                    if (errorCount++ > 15)
-                    {
-                        Error($"连续失败次数达到{errorCount}次, 系统将停止运行.");
-                    }
-                    continue;
+                    System.Console.WriteLine($"领取失败, {id} 将被移除. --> {str4}");
+                    AllIds.RemoveAll(x => x == id);
                 }
 
-                errorCount = 0;
                 System.Console.WriteLine();
                 System.Console.WriteLine();
                 System.Console.WriteLine("--------------进入下一轮--------------");
@@ -133,18 +149,12 @@ namespace ParkingFree
             throw new Exception("程序异常中断");
         }
 
-        static string[] Ids = new[]
-        {
-            "440705593179635718",
-            "440705593179635721",
-            "440705593179635719",
-            "440705593179635720",
-            "440705593179635722"
-        };
+        static List<string> AllIds = new List<string>();
 
         static string GetId()
         {
-            return Ids[new Random().Next(0, Ids.Length)];
+            if (!AllIds.Any()) Error("没有广告可以看了");
+            return AllIds[new Random().Next(0, AllIds.Count)];
         }
     }
 }
